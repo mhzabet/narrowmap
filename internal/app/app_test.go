@@ -235,7 +235,7 @@ func TestAllParamsRestoresLowSignalNames(t *testing.T) {
 	err := RunWithInput(
 		context.Background(),
 		[]string{"--input-file", "-v-param", "--all-params", "--silent"},
-		strings.NewReader(`<div id="layout-wrapper"></div><script>const pageConfig = {};</script>`),
+		strings.NewReader(`<div id="layout-wrapper" name="layoutName"></div><script>const pageConfig = {};</script>`),
 		&stdout,
 		&stderr,
 	)
@@ -243,10 +243,13 @@ func TestAllParamsRestoresLowSignalNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := nonemptyLines(stdout.String())
-	for _, expected := range []string{"layout-wrapper", "pageConfig"} {
+	for _, expected := range []string{"layoutName", "pageConfig"} {
 		if !containsString(lines, expected) {
 			t.Errorf("--all-params should retain %q in %v", expected, lines)
 		}
+	}
+	if containsString(lines, "layout-wrapper") {
+		t.Fatalf("--all-params restored a non-input id: %v", lines)
 	}
 }
 

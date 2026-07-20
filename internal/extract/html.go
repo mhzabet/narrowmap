@@ -35,8 +35,8 @@ func HTML(data []byte, baseURL string, options Options, add func(string), warn f
 				}
 			}
 
-			if options.IncludeLowSignal || isFormElement(node.Data) {
-				add(attrs["name"])
+			add(attrs["name"])
+			if strings.EqualFold(node.Data, "input") {
 				add(attrs["id"])
 			}
 
@@ -67,15 +67,6 @@ func HTML(data []byte, baseURL string, options Options, add func(string), warn f
 	}
 	visit(doc)
 	return nil
-}
-
-func isFormElement(name string) bool {
-	switch strings.ToLower(name) {
-	case "button", "fieldset", "form", "input", "object", "option", "output", "select", "textarea":
-		return true
-	default:
-		return false
-	}
 }
 
 // HTMLScriptURLs returns same-origin external script URLs referenced by an HTML document.

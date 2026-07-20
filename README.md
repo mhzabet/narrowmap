@@ -2,7 +2,7 @@
 
 `narrowmap` is a local-first Go CLI for focused narrow-recon automation.
 
-The current `v0.2.1` scope is **filtered visible parameter discovery** from:
+The current `v0.2.6` scope is **filtered visible parameter discovery** from:
 
 - HTTP(S) links and their responses
 - Downloaded HTML files
@@ -114,7 +114,8 @@ targets and handle credentials accordingly.
 
 ### HTML
 
-- Values of `id` and `name` attributes on form-related elements
+- `id` values from `<input>` elements only
+- `name` values from every HTML element
 - Query parameter names from `href`, `src`, `action`, `formaction`, `data`, and
   `poster` URLs
 - Inline JavaScript identifiers and object keys
@@ -138,10 +139,12 @@ URLs to `links.txt` explicitly.
 
 - Parameter-like variable names
 - Function parameter names
-- Object literal keys
+- JSON-like object literal keys, including low-signal keys such as `obj_val`
 - Destructuring keys and bindings
-- Parameter-like member property names
 - Query parameter names found in URL strings
+
+Member access names such as `image.currentSrc`, `response.status`, and
+`client.callMethod` are not extracted.
 
 The default filter rejects:
 
@@ -152,10 +155,25 @@ The default filter rejects:
 - Function names and function-valued object callbacks
 - Generic implementation names such as `pageConfig`, `response`, and
   `requestOptions`
+- JavaScript reserved words, global constructors, browser globals, and
+  built-in method names
+- Class, constructor, exported member, and enum names
+- Member names such as `addEventListener`, `callMethod`, `currentSrc`,
+  `forEach`, `status`, and `Object.keys`
+- DOM/runtime properties such as `currentSrc`, `readyState`, and `parentNode`
+- Framework execution queues such as `callQueue`, `callbackQueue`, and
+  `taskQueue`
+- React/Preact and Vue-style hooks matching `use[A-Z]`, including custom and
+  future hooks
+- Lifecycle, compiler, and rendering APIs from Next/Remix, Vue/Nuxt, Angular,
+  Svelte/SvelteKit, Solid, Qwik, Astro, Lit, Alpine, Stencil, HTMX, and Gatsby
+- Library metadata such as `$$typeof`, `AxiosHeaders`, `ERR_BAD_REQUEST`,
+  `HttpStatusCode`, `ERR_*` constants, and HTTP status enum labels
 
 Names with parameter signals such as `user_id`, `accountId`, `redirect_to`,
 `api_token`, `email`, `cursor`, `amount`, `role`, `file`, `webhook`, and
-`callback` are retained.
+`callback` are retained. The hook rule does not reject names such as `userId`
+or `use_id`.
 
 Use the broad compatibility mode when investigating a missed candidate:
 
@@ -163,10 +181,11 @@ Use the broad compatibility mode when investigating a missed candidate:
 narrowmap --input-file app.js --all-params
 ```
 
-`--all-params` restores low-signal JavaScript names and `id`/`name` attributes
-from non-form HTML elements. If strict parsing fails, a conservative static
-fallback keeps declarations, object keys, and URL query names. JavaScript is
-never executed.
+`--all-params` restores low-signal variable names. Valid object keys are already
+kept by default. The flag never enables member access names, class names, library
+metadata, or IDs from non-input HTML elements. If strict parsing fails, a
+conservative static fallback keeps declarations, object keys, and URL query
+names. JavaScript is never executed.
 
 ### JSON
 
@@ -182,7 +201,7 @@ never executed.
 - Parameter candidates extracted from HTML, JavaScript, or JSON response bodies
 
 Raw POST bodies, HAR files, and Burp request/response exports are not part of
-`v0.2.1`; they are planned as separate input modes.
+`v0.2.6`; they are planned as separate input modes.
 
 ## Output Contract
 

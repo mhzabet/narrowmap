@@ -14,7 +14,7 @@ import (
 	"narrowmap/internal/model"
 )
 
-const version = "0.2.1"
+const version = "0.2.6"
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithInput(ctx, args, os.Stdin, stdout, stderr)

@@ -37,6 +37,7 @@ func TestHTMLExtractsVisibleNamesLinksAndInlineScripts(t *testing.T) {
 		"email",
 		"email-field",
 		"form_query",
+		"ignored-but-visible",
 		"include",
 		"invoice_id",
 		"order_id",
@@ -50,7 +51,7 @@ func TestHTMLExtractsVisibleNamesLinksAndInlineScripts(t *testing.T) {
 	}
 }
 
-func TestJavaScriptExtractsDeclarationsObjectsAndMembers(t *testing.T) {
+func TestJavaScriptExtractsDeclarationsAndObjectKeys(t *testing.T) {
 	data := []byte(`
 		const requestOptions = {
 		  headers: { "x-api-key": tokenValue },
@@ -58,8 +59,9 @@ func TestJavaScriptExtractsDeclarationsObjectsAndMembers(t *testing.T) {
 		};
 		const response = await fetch("/api/items?cursor=next_cursor", requestOptions);
 		response.json().then(({ item_id, owner_id }) => item_id);
-		const item = response.data;
+		const source_url = response.data;
 		item.profile_id;
+		item["accountStatus"];
 	`)
 	var got []string
 	JavaScript(data, "", Options{}, gotAdder(&got), func(error) {})
@@ -67,13 +69,15 @@ func TestJavaScriptExtractsDeclarationsObjectsAndMembers(t *testing.T) {
 
 	for _, expected := range []string{
 		"account_id", "body", "cursor", "display-name", "headers",
-		"item_id", "owner_id", "profile_id", "x-api-key",
+		"item_id", "owner_id", "source_url", "x-api-key",
 	} {
 		if !contains(got, expected) {
 			t.Errorf("missing %q in %v", expected, got)
 		}
 	}
-	for _, rejected := range []string{"accountId", "item", "requestOptions", "response", "tokenValue"} {
+	for _, rejected := range []string{
+		"accountId", "accountStatus", "data", "profile_id", "requestOptions", "response", "tokenValue",
+	} {
 		if contains(got, rejected) {
 			t.Errorf("unexpected low-signal identifier %q in %v", rejected, got)
 		}
@@ -130,7 +134,7 @@ func TestJavaScriptFilterRejectsFrameworkLifecycleNames(t *testing.T) {
 		}
 	}
 	for _, rejected := range []string{
-		"componentName", "element", "onCreatePage", "pageConfig", "useState", "wrapRootElement",
+		"element", "onCreatePage", "pageConfig", "useState", "wrapRootElement",
 	} {
 		if contains(filtered, rejected) {
 			t.Errorf("unexpected framework candidate %q in %v", rejected, filtered)
@@ -139,31 +143,254 @@ func TestJavaScriptFilterRejectsFrameworkLifecycleNames(t *testing.T) {
 
 	var broad []string
 	JavaScript(data, "", Options{IncludeLowSignal: true}, gotAdder(&broad), func(error) {})
-	for _, expected := range []string{"componentName", "pageConfig", "wrapRootElement"} {
+	for _, expected := range []string{"componentName", "pageConfig"} {
 		if !contains(broad, expected) {
 			t.Errorf("--all-params should retain %q in %v", expected, broad)
 		}
 	}
+	if contains(broad, "wrapRootElement") {
+		t.Errorf("--all-params retained member property %q in %v", "wrapRootElement", broad)
+	}
 }
 
-func TestHTMLAllParamsRestoresNonFormIDs(t *testing.T) {
+func TestJavaScriptRejectsTopFrameworkRuntimeNames(t *testing.T) {
+	data := []byte(`
+		const useCSSOMInjection = 1;
+		const useDebugValue = 1;
+		const useDecimalCurrencyValues = 1;
+		const useDeferredValue = 1;
+		const useId = 1;
+		const useImperativeHandle = 1;
+		const useInsertionEffect = 1;
+		const useLayoutEffect = 1;
+		const useMutableSource = 1;
+		const useSyncExternalStore = 1;
+		const useTransition = 1;
+		const usingClientEntryPoint = 1;
+		const userId = 7;
+		const use_id = 8;
+		const user_id = 9;
+		const frameworkRuntime = {
+			getStaticProps: "",
+			generateMetadata: "",
+			shouldRevalidate: "",
+			onMounted: "",
+			defineNuxtConfig: "",
+			ngOnInit: "",
+			ngAfterViewInit: "",
+			onMount: "",
+			beforeUpdate: "",
+			createSignal: "",
+			createEffect: "",
+			component$: "",
+			routeLoader$: "",
+			defineCollection: "",
+			getCollection: "",
+			createRenderRoot: "",
+			customElement: "",
+			requestUpdate: "",
+			componentWillLoad: "",
+			connectedCallback: "",
+			htmx: "",
+			$nextTick: "",
+			$dispatch: "",
+			__reactServerRuntime: "",
+			__svelteKitRuntime: "",
+			ɵɵdefineComponent: "",
+			obj_val: ""
+		};
+	`)
+
+	var got []string
+	JavaScript(data, "", Options{IncludeLowSignal: true}, gotAdder(&got), func(error) {})
+
+	for _, expected := range []string{"obj_val", "use_id", "userId", "user_id"} {
+		if !contains(got, expected) {
+			t.Errorf("useful parameter %q was dropped from %v", expected, got)
+		}
+	}
+	for _, rejected := range []string{
+		"$dispatch", "$nextTick", "__reactServerRuntime", "__svelteKitRuntime",
+		"beforeUpdate", "component$", "componentWillLoad", "connectedCallback",
+		"createEffect", "createRenderRoot", "createSignal", "customElement",
+		"defineCollection", "defineNuxtConfig",
+		"generateMetadata", "getCollection", "getStaticProps",
+		"htmx", "ngAfterViewInit", "ngOnInit", "onMount", "onMounted",
+		"requestUpdate", "routeLoader$", "shouldRevalidate",
+		"useCSSOMInjection", "useDebugValue", "useDecimalCurrencyValues",
+		"useDeferredValue", "useId", "useImperativeHandle",
+		"useInsertionEffect", "useLayoutEffect", "useMutableSource",
+		"useSyncExternalStore", "useTransition", "usingClientEntryPoint",
+		"ɵɵdefineComponent",
+	} {
+		if contains(got, rejected) {
+			t.Errorf("framework runtime name %q was retained in %v", rejected, got)
+		}
+	}
+}
+
+func TestJavaScriptFilterRejectsBuiltInsAndCalledMethods(t *testing.T) {
+	data := []byte(`
+		const request_id = 7;
+		const payload = { user_id: request_id, filter: "active" };
+		window.addEventListener("load", callback);
+		client.callMethod(payload);
+		Object.keys(payload).forEach(handleItem);
+		client["removeEventListener"]("load", callback);
+		const result = new Promise(resolve);
+	`)
+
+	var got []string
+	JavaScript(data, "", Options{IncludeLowSignal: true}, gotAdder(&got), func(error) {})
+
+	for _, expected := range []string{"request_id", "user_id", "filter"} {
+		if !contains(got, expected) {
+			t.Errorf("missing useful candidate %q in %v", expected, got)
+		}
+	}
+	for _, rejected := range []string{
+		"addEventListener", "callMethod", "forEach", "keys",
+		"removeEventListener", "Object", "Promise",
+	} {
+		if contains(got, rejected) {
+			t.Errorf("unexpected built-in or called method %q in %v", rejected, got)
+		}
+	}
+}
+
+func TestJavaScriptFilterRejectsDOMRuntimeAndQueueNames(t *testing.T) {
+	data := []byte(`
+		const callQueue = [];
+		const callbackQueue = [];
+		const taskQueue = [];
+		const source_url = image.currentSrc;
+		const queue_id = 7;
+		const payload = { request_queue: "priority", user_id: 1 };
+		video.readyState;
+		node.parentNode;
+	`)
+
+	var got []string
+	JavaScript(data, "", Options{IncludeLowSignal: true}, gotAdder(&got), func(error) {})
+
+	for _, expected := range []string{"queue_id", "request_queue", "source_url", "user_id"} {
+		if !contains(got, expected) {
+			t.Errorf("missing useful candidate %q in %v", expected, got)
+		}
+	}
+	for _, rejected := range []string{
+		"callQueue", "callbackQueue", "taskQueue", "currentSrc", "readyState", "parentNode",
+	} {
+		if contains(got, rejected) {
+			t.Errorf("unexpected DOM runtime or queue name %q in %v", rejected, got)
+		}
+	}
+}
+
+func TestJavaScriptFallbackRejectsDOMRuntimeAndQueueNames(t *testing.T) {
+	data := []byte(`const callQueue = { currentSrc: image.currentSrc, user_id: 1;`)
+	var got []string
+	JavaScript(data, "", Options{IncludeLowSignal: true}, gotAdder(&got), func(error) {})
+
+	if !contains(got, "user_id") {
+		t.Fatalf("fallback dropped useful parameter: %v", got)
+	}
+	for _, rejected := range []string{"callQueue", "currentSrc"} {
+		if contains(got, rejected) {
+			t.Errorf("fallback retained runtime name %q in %v", rejected, got)
+		}
+	}
+}
+
+func TestJavaScriptRejectsLibraryExportsAndEnumMetadata(t *testing.T) {
+	data := []byte(`
+		class AxiosHeaders {}
+		class userModel {}
+		function requestHandler() {}
+		const HttpStatusCode = {
+			Continue: 100,
+			Created: 201,
+			BadRequest: 400,
+			HttpVersionNotSupported: 505,
+			InternalServerError: 500,
+			MisdirectedRequest: 421,
+			MultiStatus: 207,
+			NetworkAuthenticationRequired: 511,
+			NoContent: 204,
+			NonAuthoritativeInformation: 203,
+			PartialContent: 206,
+			PayloadTooLarge: 413,
+			PaymentRequired: 402,
+			PermanentRedirect: 308,
+			ProxyAuthenticationRequired: 407,
+			RequestHeaderFieldsTooLarge: 431,
+			RequestTimeout: 408,
+			ResetContent: 205,
+			Unauthorized: 401,
+			UriTooLong: 414,
+			obj_val: ""
+		};
+		const metadata = {
+			"$$typeof": Symbol.for("react.element"),
+			"Content-Type": "application/json",
+			ERR_BAD_OPTION_VALUE: "ERR_BAD_OPTION_VALUE",
+			ERR_BAD_REQUEST: "ERR_BAD_REQUEST",
+			ERR_FR_TOO_MANY_REDIRECTS: "ERR_FR_TOO_MANY_REDIRECTS",
+			ERR_INVALID_URL: "ERR_INVALID_URL",
+			ERR_UNKNOWN_LIBRARY_CODE: "ERR_UNKNOWN_LIBRARY_CODE",
+			MozPrintableKey: "MozPrintableKey"
+		};
+		axios.CancelToken;
+		React.Profiler;
+		React.PropTypes;
+	`)
+
+	var got []string
+	JavaScript(data, "", Options{}, gotAdder(&got), func(error) {})
+
+	if !contains(got, "obj_val") {
+		t.Fatalf("JSON-like object key was dropped: %v", got)
+	}
+	for _, rejected := range []string{
+		"$$typeof", "AxiosHeaders", "BadRequest", "CancelToken", "Content-Type",
+		"Continue", "Created", "ERR_BAD_OPTION_VALUE", "ERR_BAD_REQUEST",
+		"ERR_FR_TOO_MANY_REDIRECTS", "ERR_INVALID_URL",
+		"ERR_UNKNOWN_LIBRARY_CODE", "HttpStatusCode", "HttpVersionNotSupported",
+		"InternalServerError", "MisdirectedRequest", "MozPrintableKey", "MultiStatus",
+		"NetworkAuthenticationRequired", "NoContent",
+		"NonAuthoritativeInformation", "PartialContent", "PayloadTooLarge",
+		"PaymentRequired", "PermanentRedirect", "Profiler", "PropTypes",
+		"ProxyAuthenticationRequired", "RequestHeaderFieldsTooLarge",
+		"RequestTimeout", "ResetContent", "Unauthorized", "UriTooLong",
+		"requestHandler", "userModel",
+	} {
+		if contains(got, rejected) {
+			t.Errorf("library or enum metadata %q was retained in %v", rejected, got)
+		}
+	}
+}
+
+func TestHTMLOnlyExtractsInputIDsAndAllNameAttributes(t *testing.T) {
 	data := []byte(`<div id="gatsby-focus-wrapper" name="layoutNode"></div><input name="email">`)
 	var filtered []string
 	if err := HTML(data, "", Options{}, gotAdder(&filtered), func(error) {}); err != nil {
 		t.Fatal(err)
 	}
-	if contains(filtered, "gatsby-focus-wrapper") || contains(filtered, "layoutNode") {
-		t.Fatalf("default HTML filter retained layout identifiers: %v", filtered)
+	if contains(filtered, "gatsby-focus-wrapper") {
+		t.Fatalf("non-input id was retained: %v", filtered)
+	}
+	for _, expected := range []string{"layoutNode", "email"} {
+		if !contains(filtered, expected) {
+			t.Errorf("missing name attribute %q in %v", expected, filtered)
+		}
 	}
 
 	var broad []string
 	if err := HTML(data, "", Options{IncludeLowSignal: true}, gotAdder(&broad), func(error) {}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"gatsby-focus-wrapper", "layoutNode", "email"} {
-		if !contains(broad, expected) {
-			t.Errorf("--all-params should retain %q in %v", expected, broad)
-		}
+	if contains(broad, "gatsby-focus-wrapper") {
+		t.Fatalf("--all-params restored a non-input id: %v", broad)
 	}
 }
 

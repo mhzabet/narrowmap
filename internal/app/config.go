@@ -28,7 +28,7 @@ Input:
 
 Discovery:
   -v-param               Discover visible parameter candidates (default mode)
-  --all-params           Include low-signal JS names and non-form HTML ids/names
+  --all-params           Include low-signal JavaScript variable names
   --include-same-origin-js
                          Fetch same-origin JavaScript referenced by HTML (default)
   --no-same-origin-js    Do not fetch same-origin JavaScript referenced by HTML
