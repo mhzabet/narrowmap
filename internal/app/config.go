@@ -50,21 +50,21 @@ Output:
 `
 
 type config struct {
-	inputLinks string
-	inputURL   string
-	inputDir   string
-	inputFile  string
-	visible    bool
-	allParams  bool
+	inputLinks          string
+	inputURL            string
+	inputDir            string
+	inputFile           string
+	visible             bool
+	allParams           bool
 	includeSameOriginJS bool
-	silent     bool
-	output     string
-	headers    headerFlags
-	concurrent int
-	delay      time.Duration
-	timeout    time.Duration
-	maxBody    int64
-	version    bool
+	silent              bool
+	output              string
+	headers             headerFlags
+	concurrent          int
+	delay               time.Duration
+	timeout             time.Duration
+	maxBody             int64
+	version             bool
 }
 
 type headerFlags []string
