@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <body id="account-page">
+    <form action="/search?source=sample">
+      <input id="email-field" name="email">
+    </form>
+    <a href="/orders?order_id=42&include=items">Orders</a>
+    <script src="app.js?asset_version=1"></script>
+    <script>
+      const pageConfig = {
+        redirect_to: "/dashboard",
+        user_id: 7
+      };
+    </script>
+  </body>
+</html>
