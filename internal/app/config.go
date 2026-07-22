@@ -9,16 +9,22 @@ import (
 	"time"
 )
 
-const usageText = `narrowmap discovers visible parameter candidates in HTML, JavaScript, JSON, and URLs.
+const usageText = `narrowmap discovers parameters, archived routes, and target-specific fuzzing wordlists.
 
 Usage:
   narrowmap --input-links links.txt -v-param [options]
   narrowmap --input-url https://target.example -v-param [options]
   narrowmap --input-folder pages_folder -v-param [options]
   narrowmap --input-file page.html -v-param [options]
+  narrowmap --paramgen params.txt [options]
+  narrowmap --robofinder target.example [options]
+  narrowmap --ojs target.example [options]
   cat links.txt | narrowmap --input-links -v-param [options]
   echo target.example | narrowmap --input-url -v-param [options]
   cat page.html | narrowmap --input-file -v-param [options]
+  cat params.txt | narrowmap --paramgen [options]
+  cat targets.txt | narrowmap --robofinder [options]
+  cat targets.txt | narrowmap --ojs [options]
 
 Input:
   --input-links FILE     File containing URLs; omit FILE or use - for stdin
@@ -33,6 +39,27 @@ Discovery:
                          Fetch same-origin JavaScript referenced by HTML (default)
   --no-same-origin-js    Do not fetch same-origin JavaScript referenced by HTML
 
+Paramgen:
+  --paramgen FILE        Generate a smart wordlist from observed parameters; omit FILE or use - for stdin
+  --paramgen-prefixes FILE
+                         Add target-specific prefixes from a file
+  --paramgen-suffixes FILE
+                         Add target-specific suffixes from a file
+  --paramgen-limit N     Maximum generated values per input parameter (default 64)
+
+Archive discovery:
+  --robofinder TARGET    Extract old endpoints from archived robots.txt versions; omit TARGET for stdin
+  --ojs TARGET           Extract endpoints from archived JavaScript contexts; omit TARGET for stdin
+  --archive-delay DURATION
+                         Serial delay before every archive action (default 2s; minimum 500ms)
+  --archive-timeout DURATION
+                         Timeout for each waybackurls or replay request (default 90s)
+  --archive-retries N    Retries for transient archive failures (default 3)
+  --archive-max-versions N
+                         Evenly sample at most N distinct versions per file; 0 keeps all (default 0)
+  --archive-no-subs      Ask waybackurls not to include subdomains
+  --waybackurls-bin FILE Path or command name for tomnomnom/waybackurls (default waybackurls)
+
 HTTP:
   -H 'Name: value'       Add a request header; repeat for multiple headers
   -c, -t, --concurrency N
@@ -43,8 +70,8 @@ HTTP:
   --max-body SIZE        Maximum response/file size, such as 10MB (default 10MB)
 
 Output:
-  -s, --silent           Stream each unique parameter to stdout as it is found
-  -o, --output FILE      Also write final sorted parameters to a file
+  -s, --silent           Stream unique findings without progress; paramgen remains sorted
+  -o, --output FILE      Also write final sorted findings to a file
   --version              Show the narrowmap version
   -h, --help             Show this help
 `
@@ -54,6 +81,18 @@ type config struct {
 	inputURL            string
 	inputDir            string
 	inputFile           string
+	paramgen            string
+	paramgenPrefixes    string
+	paramgenSuffixes    string
+	paramgenLimit       int
+	robofinder          string
+	ojs                 string
+	archiveDelay        time.Duration
+	archiveTimeout      time.Duration
+	archiveRetries      int
+	archiveMaxVersions  int
+	archiveNoSubs       bool
+	waybackBin          string
 	visible             bool
 	allParams           bool
 	includeSameOriginJS bool
@@ -97,6 +136,19 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.inputURL, "u", "", "")
 	fs.StringVar(&cfg.inputDir, "input-folder", "", "")
 	fs.StringVar(&cfg.inputFile, "input-file", "", "")
+	fs.StringVar(&cfg.paramgen, "paramgen", "", "")
+	fs.StringVar(&cfg.paramgenPrefixes, "paramgen-prefixes", "", "")
+	fs.StringVar(&cfg.paramgenSuffixes, "paramgen-suffixes", "", "")
+	fs.IntVar(&cfg.paramgenLimit, "paramgen-limit", 64, "")
+	fs.StringVar(&cfg.robofinder, "robofinder", "", "")
+	fs.StringVar(&cfg.ojs, "ojs", "", "")
+	fs.StringVar(&cfg.ojs, "oJs", "", "")
+	fs.DurationVar(&cfg.archiveDelay, "archive-delay", 2*time.Second, "")
+	fs.DurationVar(&cfg.archiveTimeout, "archive-timeout", 90*time.Second, "")
+	fs.IntVar(&cfg.archiveRetries, "archive-retries", 3, "")
+	fs.IntVar(&cfg.archiveMaxVersions, "archive-max-versions", 0, "")
+	fs.BoolVar(&cfg.archiveNoSubs, "archive-no-subs", false, "")
+	fs.StringVar(&cfg.waybackBin, "waybackurls-bin", "waybackurls", "")
 	fs.BoolVar(&cfg.visible, "v-param", false, "")
 	fs.BoolVar(&cfg.allParams, "all-params", false, "")
 	fs.BoolVar(&cfg.includeSameOriginJS, "include-same-origin-js", true, "")
@@ -131,13 +183,51 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	}
 
 	inputs := 0
-	for _, value := range []string{cfg.inputLinks, cfg.inputURL, cfg.inputDir, cfg.inputFile} {
+	for _, value := range []string{cfg.inputLinks, cfg.inputURL, cfg.inputDir, cfg.inputFile, cfg.paramgen, cfg.robofinder, cfg.ojs} {
 		if value != "" {
 			inputs++
 		}
 	}
 	if inputs != 1 {
-		return cfg, errors.New("choose exactly one of --input-links, --input-url, --input-folder, or --input-file")
+		return cfg, errors.New("choose exactly one of --input-links, --input-url, --input-folder, --input-file, --paramgen, --robofinder, or --ojs")
+	}
+	if cfg.paramgen == "" && (cfg.paramgenPrefixes != "" || cfg.paramgenSuffixes != "") {
+		return cfg, errors.New("--paramgen-prefixes and --paramgen-suffixes require --paramgen")
+	}
+	if cfg.paramgen != "" && (cfg.paramgenPrefixes == "-" || cfg.paramgenSuffixes == "-") {
+		return cfg, errors.New("custom paramgen prefix and suffix lists must be files, not stdin")
+	}
+	if cfg.paramgenLimit < 1 || cfg.paramgenLimit > 1000 {
+		return cfg, errors.New("--paramgen-limit must be between 1 and 1000")
+	}
+	archiveMode := cfg.robofinder != "" || cfg.ojs != ""
+	archiveOptionsSet := false
+	fs.Visit(func(option *flag.Flag) {
+		switch option.Name {
+		case "archive-delay", "archive-timeout", "archive-retries", "archive-max-versions", "archive-no-subs", "waybackurls-bin":
+			archiveOptionsSet = true
+		}
+	})
+	if archiveOptionsSet && !archiveMode {
+		return cfg, errors.New("archive options require --robofinder or --ojs")
+	}
+	if archiveMode && len(cfg.headers) > 0 {
+		return cfg, errors.New("-H is not accepted in archive modes because target credentials must not be sent to archive.org")
+	}
+	if archiveMode && cfg.archiveDelay < 500*time.Millisecond {
+		return cfg, errors.New("--archive-delay must be at least 500ms")
+	}
+	if cfg.archiveTimeout <= 0 {
+		return cfg, errors.New("--archive-timeout must be greater than zero")
+	}
+	if cfg.archiveRetries < 0 || cfg.archiveRetries > 10 {
+		return cfg, errors.New("--archive-retries must be between 0 and 10")
+	}
+	if cfg.archiveMaxVersions < 0 || cfg.archiveMaxVersions > 10000 {
+		return cfg, errors.New("--archive-max-versions must be between 0 and 10000")
+	}
+	if strings.TrimSpace(cfg.waybackBin) == "" {
+		return cfg, errors.New("--waybackurls-bin cannot be empty")
 	}
 	cfg.visible = true
 	if cfg.concurrent < 1 || cfg.concurrent > 100 {
@@ -164,6 +254,10 @@ func normalizeStdinArgs(args []string) []string {
 		"--input-file":  {},
 		"--input-links": {},
 		"--input-url":   {},
+		"--paramgen":    {},
+		"--robofinder":  {},
+		"--ojs":         {},
+		"--oJs":         {},
 		"-u":            {},
 	}
 

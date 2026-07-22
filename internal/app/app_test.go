@@ -208,6 +208,111 @@ func TestRunInputURLFromStdin(t *testing.T) {
 	}
 }
 
+func TestRunParamgenFileProducesSortedUsefulOutput(t *testing.T) {
+	root := t.TempDir()
+	seedsPath := filepath.Join(root, "params.txt")
+	prefixesPath := filepath.Join(root, "prefixes.txt")
+	suffixesPath := filepath.Join(root, "suffixes.txt")
+	outputPath := filepath.Join(root, "generated.txt")
+	writeTestFile(t, seedsPath, "user_id\naccountId\nyahoo_home_ui\nuser_id\nuseEffect\n")
+	writeTestFile(t, prefixesPath, "internal\n")
+	writeTestFile(t, suffixesPath, "checksum\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunWithInput(
+		context.Background(),
+		[]string{
+			"--paramgen", seedsPath,
+			"--paramgen-prefixes", prefixesPath,
+			"--paramgen-suffixes", suffixesPath,
+			"-o", outputPath,
+		},
+		strings.NewReader(""),
+		&stdout,
+		&stderr,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonemptyLines(stdout.String())
+	if !sort.StringsAreSorted(lines) {
+		t.Fatalf("paramgen output is not sorted: %v", lines)
+	}
+	for _, expected := range []string{
+		"user_id", "accountId", "user_uuid", "accountUuid",
+		"internal_user_id", "user_checksum", "yahoo_home_redirect",
+	} {
+		if !containsString(lines, expected) {
+			t.Errorf("missing generated parameter %q in %v", expected, lines)
+		}
+	}
+	if containsString(lines, "useEffect") {
+		t.Fatal("framework runtime noise was retained")
+	}
+
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != string(written) {
+		t.Fatal("-o output differs from sorted stdout output")
+	}
+	for _, stage := range []string{
+		"[+] target-specific parameter generation",
+		"[+] accepted 3 seed parameters (1 invalid, 1 duplicate)",
+	} {
+		if !strings.Contains(stderr.String(), stage) {
+			t.Errorf("missing progress stage %q in %q", stage, stderr.String())
+		}
+	}
+}
+
+func TestRunParamgenFromStdinIsSilentAndSorted(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunWithInput(
+		context.Background(),
+		[]string{"--paramgen", "--silent"},
+		strings.NewReader("status\nuser_id\naccount_id\n"),
+		&stdout,
+		&stderr,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonemptyLines(stdout.String())
+	if !sort.StringsAreSorted(lines) {
+		t.Fatalf("silent paramgen output is not deterministic: %v", lines)
+	}
+	if containsString(lines, "status_id") {
+		t.Fatal("generic observed suffix was applied to status")
+	}
+	if !containsString(lines, "payment_status") {
+		t.Fatalf("missing semantic status candidate in %v", lines)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("silent paramgen should not print progress: %q", stderr.String())
+	}
+}
+
+func TestRunParamgenRejectsInputModeConflicts(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunWithInput(
+		context.Background(),
+		[]string{"--paramgen", "params.txt", "--input-file", "page.html"},
+		strings.NewReader(""),
+		&stdout,
+		&stderr,
+	)
+	if err == nil || !strings.Contains(err.Error(), "choose exactly one") {
+		t.Fatalf("expected an input-mode conflict, got %v", err)
+	}
+}
+
 func TestNormalizeHTTPURLAddsHTTPS(t *testing.T) {
 	actual, err := normalizeHTTPURL("target.example/path?user_id=1")
 	if err != nil {

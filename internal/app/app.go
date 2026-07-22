@@ -14,7 +14,7 @@ import (
 	"narrowmap/internal/model"
 )
 
-const version = "0.2.6"
+const version = "0.4.0"
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithInput(ctx, args, os.Stdin, stdout, stderr)
@@ -35,15 +35,40 @@ func RunWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, s
 
 	params := newCollector(stdout, cfg.silent)
 	log := newProgress(stderr, !cfg.silent)
+	resultLabel := "parameters"
 	warnings := 0
 	warn := func(source string, err error) {
 		warnings++
 		log.Warn("%s: %v", source, err)
 	}
 
-	log.Stage("visible parameter discovery")
+	switch {
+	case cfg.paramgen != "":
+		log.Stage("target-specific parameter generation")
+		if err := runParamgen(ctx, cfg, stdin, params, log, warn); err != nil {
+			return err
+		}
+	case cfg.robofinder != "":
+		resultLabel = "archived robots endpoints"
+		log.Stage("robofinder: slow archived robots.txt discovery")
+		if err := runArchiveFeature(ctx, cfg, stdin, params, log, warn); err != nil {
+			return err
+		}
+	case cfg.ojs != "":
+		resultLabel = "archived JavaScript endpoints"
+		log.Stage("oJs: slow archived JavaScript endpoint discovery")
+		if err := runArchiveFeature(ctx, cfg, stdin, params, log, warn); err != nil {
+			return err
+		}
+	default:
+		log.Stage("visible parameter discovery")
+	}
 
 	switch {
+	case cfg.paramgen != "":
+
+	case cfg.robofinder != "" || cfg.ojs != "":
+
 	case cfg.inputFile != "":
 		source := cfg.inputFile
 		if source == "-" {
@@ -131,9 +156,9 @@ func RunWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, s
 		if err := writeLines(cfg.output, values); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
-		log.Stage("wrote %d parameters to %s", len(values), cfg.output)
+		log.Stage("wrote %d %s to %s", len(values), resultLabel, cfg.output)
 	}
-	log.Stage("complete: %d unique parameters, %d warnings", len(values), warnings)
+	log.Stage("complete: %d unique %s, %d warnings", len(values), resultLabel, warnings)
 	return nil
 }
 

@@ -221,7 +221,7 @@ func fetchOne(ctx context.Context, client *http.Client, link string, headers htt
 	if err != nil {
 		return fetchResult{err: err}
 	}
-	request.Header.Set("User-Agent", "narrowmap/0.1")
+	request.Header.Set("User-Agent", "narrowmap/"+version)
 	for name, values := range headers {
 		for _, value := range values {
 			request.Header.Add(name, value)
